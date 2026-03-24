@@ -38,27 +38,55 @@
       cursor: pointer;
       transition: background 0.2s;
     }
-    .btn:hover { background: #3182ce; }
+    .btn:hover:not(:disabled) { background: #3182ce; }
     .btn:disabled { background: #a0aec0; cursor: not-allowed; }
-    .status {
-      margin-top: 20px;
-      font-size: 14px;
-      color: #4a5568;
-      min-height: 20px;
+
+    /* ステータスボックス */
+    .status-box {
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: bold;
+      display: none;
     }
-    .status.success { color: #38a169; }
-    .status.error   { color: #e53e3e; }
+    .status-box.running {
+      display: block;
+      background: #ebf8ff;
+      color: #2b6cb0;
+    }
+    .status-box.success {
+      display: block;
+      background: #f0fff4;
+      color: #276749;
+      font-size: 22px;
+    }
+    .status-box.error {
+      display: block;
+      background: #fff5f5;
+      color: #c53030;
+    }
+
+    /* スピナー */
     .spinner {
       display: inline-block;
-      width: 16px; height: 16px;
-      border: 2px solid #cbd5e0;
-      border-top-color: #4299e1;
+      width: 18px; height: 18px;
+      border: 3px solid #bee3f8;
+      border-top-color: #3182ce;
       border-radius: 50%;
-      animation: spin 0.7s linear infinite;
+      animation: spin 0.8s linear infinite;
       vertical-align: middle;
-      margin-right: 6px;
+      margin-right: 8px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 進行ステップ */
+    .steps {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #4a90d9;
+      font-weight: normal;
+    }
     .note { font-size: 12px; color: #a0aec0; margin-top: 16px; }
   </style>
 </head>
@@ -71,67 +99,143 @@
       今週のスケジュールを更新する
     </button>
 
-    <div class="status" id="status"></div>
-    <p class="note">実行後、反映まで約2〜3分かかります</p>
+    <!-- 実行中 -->
+    <div class="status-box running" id="statusRunning">
+      <span class="spinner"></span>更新中です...
+      <div class="steps" id="stepText">ジョブを開始しています</div>
+    </div>
+
+    <!-- 完了 -->
+    <div class="status-box success" id="statusSuccess"></div>
+
+    <!-- エラー -->
+    <div class="status-box error" id="statusError"></div>
+
+    <p class="note" id="noteText">実行後、反映まで約2〜3分かかります</p>
   </div>
 
   <script>
-    // GitHub リポジトリ情報
-    const OWNER = "telarialtd-create";
-    const REPO  = "venrey-automation";
+    const OWNER    = "telarialtd-create";
+    const REPO     = "venrey-automation";
     const WORKFLOW = "update_schedule.yml";
 
-    // GitHub Personal Access Token（ページ読み込み時に一度だけ入力）
+    // トークンを localStorage に保存（初回のみ入力）
     let token = localStorage.getItem("gh_token");
     if (!token) {
       token = prompt("GitHubトークンを入力してください（初回のみ）:");
       if (token) localStorage.setItem("gh_token", token);
     }
 
+    const headers = {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json"
+    };
+
+    let pollTimer = null;
+
     async function triggerUpdate() {
       if (!token) {
-        setStatus("error", "トークンが設定されていません。ページを再読み込みしてください。");
+        showError("トークンが設定されていません。ページを再読み込みしてください。");
         return;
       }
 
-      const btn = document.getElementById("runBtn");
-      btn.disabled = true;
-      setStatus("loading", "実行リクエストを送信中...");
+      // ボタンを無効化・表示リセット
+      document.getElementById("runBtn").disabled = true;
+      hide("statusSuccess");
+      hide("statusError");
+      setStep("ジョブを開始しています...");
+      show("statusRunning");
+      document.getElementById("noteText").style.display = "none";
 
       try {
+        // ワークフローをトリガー
         const res = await fetch(
           `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${token}`,
-              "Accept": "application/vnd.github+json",
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ ref: "main" })
-          }
+          { method: "POST", headers, body: JSON.stringify({ ref: "main" }) }
         );
-
-        if (res.status === 204) {
-          setStatus("success", "✅ 更新を開始しました！約2〜3分後に反映されます。");
-        } else {
-          const data = await res.json().catch(() => ({}));
-          setStatus("error", `エラーが発生しました (${res.status}): ${data.message || ""}`);
+        if (res.status !== 204) {
+          const d = await res.json().catch(() => ({}));
+          showError(`起動エラー (${res.status}): ${d.message || ""}`);
+          return;
         }
+
+        // 少し待ってからポーリング開始（ジョブが登録されるまで待つ）
+        setStep("実行準備中...");
+        await sleep(4000);
+        pollStatus();
+
       } catch (e) {
-        setStatus("error", "通信エラーが発生しました。インターネット接続を確認してください。");
-      } finally {
-        setTimeout(() => { btn.disabled = false; }, 10000);
+        showError("通信エラーが発生しました。インターネット接続を確認してください。");
       }
     }
 
-    function setStatus(type, msg) {
-      const el = document.getElementById("status");
-      el.className = "status " + type;
-      el.innerHTML = type === "loading"
-        ? `<span class="spinner"></span>${msg}`
-        : msg;
+    async function pollStatus() {
+      try {
+        // 最新の workflow run を取得
+        const res = await fetch(
+          `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`,
+          { headers }
+        );
+        const data = await res.json();
+        const run = data.workflow_runs?.[0];
+
+        if (!run) {
+          setStep("実行待機中...");
+          pollTimer = setTimeout(pollStatus, 5000);
+          return;
+        }
+
+        const status     = run.status;      // queued / in_progress / completed
+        const conclusion = run.conclusion;  // success / failure / null
+
+        if (status === "queued") {
+          setStep("キュー待機中...");
+          pollTimer = setTimeout(pollStatus, 5000);
+
+        } else if (status === "in_progress") {
+          setStep("スケジュールを更新中...");
+          pollTimer = setTimeout(pollStatus, 5000);
+
+        } else if (status === "completed") {
+          hide("statusRunning");
+          document.getElementById("noteText").style.display = "";
+          document.getElementById("runBtn").disabled = false;
+
+          if (conclusion === "success") {
+            showSuccess("✅ 更新終了！！\nVenreyのスケジュールが更新されました");
+          } else {
+            showError(`更新に失敗しました（${conclusion}）\nGitHub Actions のログを確認してください。`);
+          }
+        } else {
+          pollTimer = setTimeout(pollStatus, 5000);
+        }
+
+      } catch (e) {
+        setStep("確認中...");
+        pollTimer = setTimeout(pollStatus, 8000);
+      }
     }
+
+    // ── ヘルパー関数 ──
+    function showSuccess(msg) {
+      const el = document.getElementById("statusSuccess");
+      el.style.display = "block";
+      el.innerText = msg;
+    }
+    function showError(msg) {
+      hide("statusRunning");
+      const el = document.getElementById("statusError");
+      el.style.display = "block";
+      el.innerText = msg;
+      document.getElementById("runBtn").disabled = false;
+      document.getElementById("noteText").style.display = "";
+    }
+    function setStep(msg) {
+      document.getElementById("stepText").innerText = msg;
+    }
+    function show(id) { document.getElementById(id).style.display = "block"; }
+    function hide(id) { document.getElementById(id).style.display = "none"; }
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
   </script>
 </body>
 </html>
