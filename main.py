@@ -284,52 +284,38 @@ def get_staff_id_map(page):
         () => {
             const map = {};
 
-            // 方法1: schBox の data-id から逆引き（最も確実）
-            const schBoxIds = [...new Set(
-                [...document.querySelectorAll('.schBox[data-id]')]
-                    .map(el => el.getAttribute('data-id'))
-            )];
-            for (const id of schBoxIds) {
-                const label = document.querySelector(`label[for="${id}"]`);
-                if (label) {
-                    const nameEl = label.querySelector('.listGirl_name');
-                    if (nameEl) {
-                        const name = nameEl.textContent.trim();
-                        if (name) { map[name] = id; continue; }
-                    }
-                    // listGirl_name がなければ schBox の親をたどって名前を探す
-                    const schBox = document.querySelector(`.schBox[data-id="${id}"]`);
-                    if (schBox) {
-                        let el = schBox.parentElement;
-                        while (el && el !== document.body) {
-                            const nameEl2 = el.querySelector('.listGirl_name');
-                            if (nameEl2) { map[nameEl2.textContent.trim()] = id; break; }
-                            el = el.parentElement;
-                        }
-                    }
-                } else {
-                    // label[for] がない場合は schBox の親から名前を探す
-                    const schBox = document.querySelector(`.schBox[data-id="${id}"]`);
-                    if (schBox) {
-                        let el = schBox.parentElement;
-                        while (el && el !== document.body) {
-                            const nameEl2 = el.querySelector('.listGirl_name');
-                            if (nameEl2) { map[nameEl2.textContent.trim()] = id; break; }
-                            el = el.parentElement;
-                        }
-                    }
-                }
-            }
-
-            // 方法2: label[for] からも追加（方法1で見つからなかった分を補完）
+            // 主要方法: label[for] → .listGirl_name（実績あり）
             document.querySelectorAll('label[for]').forEach(label => {
                 const nameEl = label.querySelector('.listGirl_name');
                 if (nameEl) {
                     const name = nameEl.textContent.trim();
                     const id = label.getAttribute('for');
-                    if (name && id && !map[name]) map[name] = id;
+                    if (name && id) map[name] = id;
                 }
             });
+
+            // 補完: label[for] で見つからなかったスタッフを schBox → 親要素 で探す
+            const schBoxIds = [...new Set(
+                [...document.querySelectorAll('.schBox[data-id]')]
+                    .map(el => el.getAttribute('data-id'))
+            )];
+            for (const id of schBoxIds) {
+                // すでに label[for] でマップ済みの id はスキップ
+                if (Object.values(map).includes(id)) continue;
+                // schBox の親をたどって .listGirl_name を探す
+                const schBox = document.querySelector(`.schBox[data-id="${id}"]`);
+                if (!schBox) continue;
+                let el = schBox.parentElement;
+                while (el && el !== document.body) {
+                    const nameEl = el.querySelector('.listGirl_name');
+                    if (nameEl) {
+                        const name = nameEl.textContent.trim();
+                        if (name && !map[name]) map[name] = id;
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+            }
 
             return map;
         }
@@ -525,20 +511,6 @@ def main():
             except PlaywrightTimeout:
                 pass
 
-            # 表示人数セレクトを最大値に変更して全スタッフを 1 ページに表示
-            try:
-                sel = page.locator("select").filter(has_text=re.compile(r'\d{2,3}人?$'))
-                if sel.count() > 0:
-                    # 選択肢の最大値を選ぶ
-                    options = sel.first.evaluate(
-                        "el => [...el.options].map(o => ({value: o.value, text: o.text}))"
-                    )
-                    max_opt = max(options, key=lambda o: int(re.search(r'\d+', o['value'] or o['text']).group()) if re.search(r'\d+', o['value'] or o['text']) else 0)
-                    sel.first.select_option(value=max_opt['value'])
-                    page.wait_for_load_state("networkidle", timeout=15000)
-                    print(f"表示人数を {max_opt['text']} に変更しました")
-            except Exception as e:
-                print(f"表示人数の変更に失敗しました: {e}（続行します）")
 
             # ── 全スタッフを一括更新（今週・来週の2画面をカバー）──
             updated = 0
