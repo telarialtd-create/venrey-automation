@@ -37,9 +37,10 @@ STORE_SEPARATOR = "ふわもこSPA"
 # スプレッドシート ID（URL の /d/ と /edit の間の文字列）
 SPREADSHEET_ID = "10siqLe6B9A7uvNWgRUdHb462RqxCxkGEGMEKTPhY-S8"
 
-# 今月のシート名（例: "4月"）を自動生成して URL を組み立てる
+# 今月のシート名（例: "2026年4月"）を自動生成して URL を組み立てる
 # シート名でアクセスするため、毎月 GID を変更する必要なし
-_current_month_sheet = f"{datetime.now().month}月"
+_now = datetime.now()
+_current_month_sheet = f"{_now.year}年{_now.month}月"
 SHEET_CSV_URL = (
     f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
     f"/gviz/tq?tqx=out:csv&sheet={_current_month_sheet}"
