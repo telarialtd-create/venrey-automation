@@ -273,41 +273,52 @@ def get_staff_id_map(page):
     """
     現在のページに表示されているスタッフ名 → data-id のマッピングを取得する。
 
-    HTML構造:
-      <label for="3934032">
-        ...
-        <p class="listGirl_name">柚月のあ</p>
-        ...
-      </label>
+    方法1: label 要素内の .schBox[data-id] を直接探す（label[for] と data-id が異なる場合に対応）
+    方法2: label[for] の値をそのまま使う（フォールバック）
     """
     result = page.evaluate("""
         () => {
             const map = {};
 
-            // schBox の data-id が実際に使われる正しい ID
-            // 各 schBox から「同じ行にある listGirl_name」を逆引きする
-            const schBoxIds = [...new Set(
-                [...document.querySelectorAll('.schBox[data-id]')]
-                    .map(el => el.getAttribute('data-id'))
-            )];
+            document.querySelectorAll('label[for]').forEach(label => {
+                const nameEl = label.querySelector('.listGirl_name');
+                if (!nameEl) return;
+                const name = nameEl.textContent.trim();
+                if (!name) return;
 
-            for (const id of schBoxIds) {
-                const schBox = document.querySelector(`.schBox[data-id="${id}"]`);
-                if (!schBox) continue;
-
-                // 親をたどり「.listGirl_name が1つだけある最小の要素」=その行を探す
-                let container = schBox.parentElement;
-                while (container && container !== document.body) {
-                    const nameEls = container.querySelectorAll('.listGirl_name');
-                    if (nameEls.length === 1) {
-                        const name = nameEls[0].textContent.trim();
-                        if (name && !map[name]) map[name] = id;
-                        break;
-                    } else if (nameEls.length > 1) {
-                        break; // 複数名が見つかったら上に行き過ぎ
-                    }
-                    container = container.parentElement;
+                // label 内部に schBox があればその data-id を使う（より正確）
+                const innerSchBox = label.querySelector('.schBox[data-id]');
+                if (innerSchBox) {
+                    const id = innerSchBox.getAttribute('data-id');
+                    if (id) { map[name] = id; return; }
                 }
+
+                // label 内に schBox がない場合は label[for] の値を使う
+                const labelId = label.getAttribute('for');
+                if (labelId && !map[name]) map[name] = labelId;
+            });
+
+            // 補完: label[for] で見つからなかった schBox data-id を位置で対応付け
+            // DOM 順の名前リストと schBox id リストを取得
+            const nameEls = [...document.querySelectorAll('.listGirl_name')];
+            const seenIds = new Set(Object.values(map));
+            const seen = new Set();
+            const allSchBoxIds = [];
+            document.querySelectorAll('.schBox[data-id]').forEach(el => {
+                const id = el.getAttribute('data-id');
+                if (!seen.has(id)) { seen.add(id); allSchBoxIds.push(id); }
+            });
+
+            // label[for] で取得した id と実際の schBox id を照合
+            // 名前順と schBox id 順が一致している前提で、未マップ分を位置で補完
+            const unmappedNames = nameEls
+                .map(el => el.textContent.trim())
+                .filter(n => n && !map[n]);
+            const unmappedIds = allSchBoxIds.filter(id => !seenIds.has(id));
+
+            const count = Math.min(unmappedNames.length, unmappedIds.length);
+            for (let i = 0; i < count; i++) {
+                if (!map[unmappedNames[i]]) map[unmappedNames[i]] = unmappedIds[i];
             }
 
             return map;
