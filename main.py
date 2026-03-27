@@ -284,36 +284,29 @@ def get_staff_id_map(page):
         () => {
             const map = {};
 
-            // 主要方法: label[for] → .listGirl_name（実績あり）
-            document.querySelectorAll('label[for]').forEach(label => {
-                const nameEl = label.querySelector('.listGirl_name');
-                if (nameEl) {
-                    const name = nameEl.textContent.trim();
-                    const id = label.getAttribute('for');
-                    if (name && id) map[name] = id;
-                }
-            });
-
-            // 補完: label[for] で見つからなかったスタッフを schBox → 親要素 で探す
+            // schBox の data-id が実際に使われる正しい ID
+            // 各 schBox から「同じ行にある listGirl_name」を逆引きする
             const schBoxIds = [...new Set(
                 [...document.querySelectorAll('.schBox[data-id]')]
                     .map(el => el.getAttribute('data-id'))
             )];
+
             for (const id of schBoxIds) {
-                // すでに label[for] でマップ済みの id はスキップ
-                if (Object.values(map).includes(id)) continue;
-                // schBox の親をたどって .listGirl_name を探す
                 const schBox = document.querySelector(`.schBox[data-id="${id}"]`);
                 if (!schBox) continue;
-                let el = schBox.parentElement;
-                while (el && el !== document.body) {
-                    const nameEl = el.querySelector('.listGirl_name');
-                    if (nameEl) {
-                        const name = nameEl.textContent.trim();
+
+                // 親をたどり「.listGirl_name が1つだけある最小の要素」=その行を探す
+                let container = schBox.parentElement;
+                while (container && container !== document.body) {
+                    const nameEls = container.querySelectorAll('.listGirl_name');
+                    if (nameEls.length === 1) {
+                        const name = nameEls[0].textContent.trim();
                         if (name && !map[name]) map[name] = id;
                         break;
+                    } else if (nameEls.length > 1) {
+                        break; // 複数名が見つかったら上に行き過ぎ
                     }
-                    el = el.parentElement;
+                    container = container.parentElement;
                 }
             }
 
