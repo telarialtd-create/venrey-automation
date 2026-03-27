@@ -10,7 +10,6 @@ Venrey管理画面の週間スケジュールを自動更新する。
 """
 
 import io
-import os
 import re
 import sys
 import time
@@ -422,19 +421,6 @@ def update_cell(page, data_id, target_date, start_time, end_time):
         return False
 
 
-SCREENSHOT_DIR = "screenshots"
-
-
-def save_screenshot(page, name):
-    """スクリーンショットを screenshots/ フォルダに保存する。"""
-    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-    ts = datetime.now().strftime("%H%M%S")
-    path = os.path.join(SCREENSHOT_DIR, f"{ts}_{name}.png")
-    try:
-        page.screenshot(path=path, full_page=True)
-        print(f"  📸 スクリーンショット保存: {path}")
-    except Exception as e:
-        print(f"  スクリーンショット失敗: {e}")
 
 
 def main():
@@ -485,13 +471,11 @@ def main():
             page.locator('button[type="submit"], button:has-text("ログイン")').first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
             print("ログイン完了")
-            save_screenshot(page, f"店舗{store_idx+1}_01_ログイン後")
 
             # 週間スケジュールへ移動
             page.locator("text=週間スケジュール").first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
             print("週間スケジュール画面を開きました")
-            save_screenshot(page, f"店舗{store_idx+1}_02_週間スケジュール")
 
             # 「今週」ボタンで現在の週に移動
             try:
@@ -555,7 +539,6 @@ def main():
 
                 staff_id_map = get_staff_id_map(page)
                 if screen == "今週":
-                    save_screenshot(page, f"店舗{store_idx+1}_03_今週画面")
                     print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
                     print("  [シート側の名前]:", list(this_week.keys())[:5])
                     print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
@@ -597,7 +580,6 @@ def main():
                 for staff_name, target_date, _ in pending:
                     print(f"  最終失敗: {staff_name} / {target_date.strftime('%m/%d')}")
 
-            save_screenshot(page, f"店舗{store_idx+1}_04_更新完了")
             # ── 店舗ごとの完了報告 ──
             print(f"\n{'=' * 40}")
             print(f"{label_store} 完了！  更新: {updated} 件 / 失敗: {failed} 件")
