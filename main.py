@@ -214,18 +214,26 @@ def load_schedule():
     df_next = _fetch_sheet_df(next_sheet)
 
     if df_next is not None:
-        # 来月シートが存在 → 基準月は当月分のみ、来月シートは翌月分のみ読む
-        print(f"  来月シート「{next_sheet}」も検出 → 両方を読み込みます")
-        date_map_base = _build_date_map(df_base, base_year, base_month)
-        date_map_base = {c: d for c, d in date_map_base.items() if d.month == base_month}
+        # 来月シートが存在するがデータが空の場合もあるため、まず内容を確認する
+        print(f"  来月シート「{next_sheet}」も検出 → 内容を確認します")
         date_map_next = _build_date_map(df_next, next_year, next_month)
-
-        schedules = _parse_staff_rows(df_base, date_map_base)
         next_schedules = _parse_staff_rows(df_next, date_map_next)
+        next_total = sum(sum(len(v) for v in s.values()) for s in next_schedules)
 
-        for i in range(2):
-            for name, dates in next_schedules[i].items():
-                schedules[i].setdefault(name, {}).update(dates)
+        if next_total > 0:
+            # 来月シートにデータあり → 当月分のみ + 来月シートを使う
+            print(f"  来月シートにデータあり（{next_total}件） → 両方を読み込みます")
+            date_map_base = _build_date_map(df_base, base_year, base_month)
+            date_map_base = {c: d for c, d in date_map_base.items() if d.month == base_month}
+            schedules = _parse_staff_rows(df_base, date_map_base)
+            for i in range(2):
+                for name, dates in next_schedules[i].items():
+                    schedules[i].setdefault(name, {}).update(dates)
+        else:
+            # 来月シートは空 → 基準シートのAJ列以降（来月プレビュー）も含めて読む
+            print(f"  来月シートは空 → AJ列以降の来月プレビューも参照します")
+            date_map = _build_date_map(df_base, base_year, base_month)
+            schedules = _parse_staff_rows(df_base, date_map)
     else:
         # 来月シート未作成 → 基準シートのAJ列以降（来月プレビュー）も含めて読む
         print(f"  来月シートなし → AJ列以降の来月プレビューも参照します")
