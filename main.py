@@ -273,52 +273,37 @@ def get_staff_id_map(page):
     """
     現在のページに表示されているスタッフ名 → data-id のマッピングを取得する。
 
-    方法1: label 要素内の .schBox[data-id] を直接探す（label[for] と data-id が異なる場合に対応）
-    方法2: label[for] の値をそのまま使う（フォールバック）
+    位置ベースマッピング: DOM 順の .listGirl_name と .schBox[data-id] 最初出現順が一致する前提。
+    label[for] と schBox の data-id が異なる場合にも対応できる。
     """
     result = page.evaluate("""
         () => {
             const map = {};
 
-            document.querySelectorAll('label[for]').forEach(label => {
-                const nameEl = label.querySelector('.listGirl_name');
-                if (!nameEl) return;
-                const name = nameEl.textContent.trim();
-                if (!name) return;
-
-                // label 内部に schBox があればその data-id を使う（より正確）
-                const innerSchBox = label.querySelector('.schBox[data-id]');
-                if (innerSchBox) {
-                    const id = innerSchBox.getAttribute('data-id');
-                    if (id) { map[name] = id; return; }
-                }
-
-                // label 内に schBox がない場合は label[for] の値を使う
-                const labelId = label.getAttribute('for');
-                if (labelId && !map[name]) map[name] = labelId;
-            });
-
-            // 補完: label[for] で見つからなかった schBox data-id を位置で対応付け
-            // DOM 順の名前リストと schBox id リストを取得
+            // 方法1: 位置ベース（名前の DOM 順 = schBox id の最初出現順 と仮定）
             const nameEls = [...document.querySelectorAll('.listGirl_name')];
-            const seenIds = new Set(Object.values(map));
             const seen = new Set();
-            const allSchBoxIds = [];
+            const schBoxIds = [];
             document.querySelectorAll('.schBox[data-id]').forEach(el => {
                 const id = el.getAttribute('data-id');
-                if (!seen.has(id)) { seen.add(id); allSchBoxIds.push(id); }
+                if (!seen.has(id)) { seen.add(id); schBoxIds.push(id); }
             });
 
-            // label[for] で取得した id と実際の schBox id を照合
-            // 名前順と schBox id 順が一致している前提で、未マップ分を位置で補完
-            const unmappedNames = nameEls
-                .map(el => el.textContent.trim())
-                .filter(n => n && !map[n]);
-            const unmappedIds = allSchBoxIds.filter(id => !seenIds.has(id));
+            const minLen = Math.min(nameEls.length, schBoxIds.length);
+            for (let i = 0; i < minLen; i++) {
+                const name = nameEls[i].textContent.trim();
+                if (name) map[name] = schBoxIds[i];
+            }
 
-            const count = Math.min(unmappedNames.length, unmappedIds.length);
-            for (let i = 0; i < count; i++) {
-                if (!map[unmappedNames[i]]) map[unmappedNames[i]] = unmappedIds[i];
+            // 方法2: schBox が見つからない場合は label[for] でフォールバック
+            if (Object.keys(map).length === 0) {
+                document.querySelectorAll('label[for]').forEach(label => {
+                    const nameEl = label.querySelector('.listGirl_name');
+                    if (!nameEl) return;
+                    const name = nameEl.textContent.trim();
+                    const id = label.getAttribute('for');
+                    if (name && id && !map[name]) map[name] = id;
+                });
             }
 
             return map;
@@ -527,8 +512,8 @@ def main():
                     if week_start <= target_date <= week_end:
                         pending.append((staff_name, target_date, shift))
 
-            # 今週・来週の最大2画面を試みる
-            for screen in ["今週", "来週"]:
+            # 先週・今週・来週の最大3画面を試みる
+            for screen in ["今週", "来週", "先週"]:
                 if not pending:
                     break
 
@@ -547,6 +532,27 @@ def main():
                         print("  翌週ボタンが見つかりませんでした。スキップします。")
                         break
 
+                elif screen == "先週":
+                    # 今週ボタンで戻ってから前週ボタンで先週へ
+                    print("\n先週画面に移動して残りを更新します...")
+                    try:
+                        page.locator('button:has-text("今週"), a:has-text("今週")').first.click(timeout=5000)
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                        time.sleep(0.5)
+                    except PlaywrightTimeout:
+                        pass
+                    try:
+                        page.locator(
+                            'button:has-text("前週"), button:has-text("先週"), '
+                            'button:has-text("前の週"), a:has-text("前週"), '
+                            'a:has-text("先週"), .prev, [aria-label="prev"]'
+                        ).first.click(timeout=5000)
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                        time.sleep(1)
+                    except PlaywrightTimeout:
+                        print("  前週ボタンが見つかりませんでした。スキップします。")
+                        break
+
                 staff_id_map = get_staff_id_map(page)
                 if screen == "今週":
                     save_screenshot(page, f"店舗{store_idx+1}_03_今週画面")
@@ -557,7 +563,8 @@ def main():
                 still_pending = []
                 for (staff_name, target_date, shift) in pending:
                     if staff_name not in staff_id_map:
-                        print(f"  [{screen}] 名前不一致でスキップ: {staff_name}")
+                        if screen == "先週":
+                            print(f"  [先週] 名前不一致でスキップ: {staff_name}")
                         still_pending.append((staff_name, target_date, shift))
                         continue
 
@@ -576,9 +583,11 @@ def main():
                         updated += 1
                         print("    → 完了")
                     else:
-                        # このセルは今の画面にない → 来週画面で再試行
                         still_pending.append((staff_name, target_date, shift))
-                        print("    → この画面にないため来週画面で再試行")
+                        if screen != "先週":
+                            print("    → この画面にないため次の画面で再試行")
+                        else:
+                            print("    → 更新失敗")
 
                 pending = still_pending
 
