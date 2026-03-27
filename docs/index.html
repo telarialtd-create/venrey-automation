@@ -137,6 +137,17 @@
     let pollTimer = null;
     let triggeredAt = null; // ボタンを押した時刻
 
+    // ページ読み込み・キャッシュ復元時にステータスを必ずリセット
+    window.addEventListener('pageshow', function() {
+      hide('statusRunning');
+      hide('statusSuccess');
+      hide('statusError');
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('noteText').style.display = '';
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      triggeredAt = null;
+    });
+
     async function triggerUpdate() {
       if (!token) {
         showError("トークンが設定されていません。ページを再読み込みしてください。");
