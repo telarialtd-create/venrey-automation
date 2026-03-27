@@ -23,15 +23,26 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 # 設定
 # ============================================================
 LOGIN_URL = "https://mrvenrey.jp/"
-STORE_ID = "GRP001121"
-PASSWORD = "hj6bf3fwck"
 
-# スプレッドシートの CSV エクスポート URL
-# ※ スプレッドシートを「リンクを知っている全員が閲覧可」に設定してから使用
+# 店舗ごとのログイン情報
+# スプレッドシートの「ふわもこSPA」行より上 → STORES[0]、以降 → STORES[1]
+STORES = [
+    {"id": "GRP001121", "password": "hj6bf3fwck"},  # 店舗1
+    {"id": "rd67",       "password": "52a4et7"},      # ふわもこSPA
+]
+
+# スプレッドシートで店舗を区切るセル値（この行以降が次の店舗）
+STORE_SEPARATOR = "ふわもこSPA"
+
+# スプレッドシート ID（URL の /d/ と /edit の間の文字列）
+SPREADSHEET_ID = "10siqLe6B9A7uvNWgRUdHb462RqxCxkGEGMEKTPhY-S8"
+
+# 今月のシート名（例: "4月"）を自動生成して URL を組み立てる
+# シート名でアクセスするため、毎月 GID を変更する必要なし
+_current_month_sheet = f"{datetime.now().month}月"
 SHEET_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/"
-    "10siqLe6B9A7uvNWgRUdHb462RqxCxkGEGMEKTPhY-S8"
-    "/export?format=csv&gid=1449788742"
+    f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+    f"/gviz/tq?tqx=out:csv&sheet={_current_month_sheet}"
 )
 
 # False: ブラウザを表示して動作確認（最初はこちら推奨）
@@ -137,36 +148,46 @@ def load_schedule():
                 pass
 
     # スタッフデータ読み込み（Row 2 以降）
-    schedule = {}
+    # STORE_SEPARATOR 行を境に店舗ごとに分ける
+    schedules = [{}, {}]  # [店舗1, 店舗2]
+    store_idx = 0
+
     for row_idx in range(2, df.shape[0]):
-        name = str(df.iloc[row_idx, 0]).strip()
-        if not name or name == "nan":
+        raw_name = str(df.iloc[row_idx, 0]).strip()
+        if not raw_name or raw_name == "nan":
             continue
+
+        # 店舗区切り行を検出したら次の店舗へ切り替え
+        if STORE_SEPARATOR in raw_name:
+            store_idx = min(store_idx + 1, len(schedules) - 1)
+            continue
+
         # スペースと末尾の数字を除去してVenrey管理画面の名前と合わせる
         # 例: "桜餅 ねる 121" → "桜餅ねる"
-        name = name.replace(" ", "").replace("\u3000", "")
+        name = raw_name.replace(" ", "").replace("\u3000", "")
         name = re.sub(r'\d+$', '', name)
-        schedule[name] = {}
+        if not name:
+            continue
+
+        schedules[store_idx][name] = {}
         for col_idx, d in date_map.items():
             parsed = parse_time_cell(df.iloc[row_idx, col_idx])
             if parsed:
-                schedule[name][d] = parsed
+                schedules[store_idx][name][d] = parsed
 
-    total = sum(len(v) for v in schedule.values())
-    print(f"読み込み完了: {len(schedule)} 人 / {total} 件のシフトデータ")
-    return schedule
+    for i, s in enumerate(schedules):
+        total = sum(len(v) for v in s.values())
+        print(f"店舗{i+1}: {len(s)} 人 / {total} 件のシフトデータ")
+    return schedules
 
 
 def get_current_week_dates():
     """
-    Venrey の週（火曜始まり・月曜終わり）で今週の開始日・終了日を返す。
-    スクリーンショット確認: 24(火)〜30(月) の7日間
+    今日から7日間（今日〜6日後）を対象期間として返す。
     """
     today = datetime.now().date()
-    # 火曜(weekday=1)始まりにするため: (weekday - 1) % 7
-    days_since_tue = (today.weekday() - 1) % 7
-    week_start = today - timedelta(days=days_since_tue)
-    week_end = week_start + timedelta(days=6)
+    week_start = today
+    week_end = today + timedelta(days=6)
     return week_start, week_end
 
 
@@ -278,6 +299,8 @@ def update_cell(page, data_id, target_date, start_time, end_time):
         # 開始時間の入力（data-role 属性のない 1 つ目の schBox_inputTime）
         start_input = schbox.locator("input.schBox_inputTime").first
         start_input.click(timeout=3000)
+        time.sleep(0.2)
+        page.keyboard.press("Control+a")
         start_input.fill(start_time)
         time.sleep(0.2)
 
@@ -285,11 +308,15 @@ def update_cell(page, data_id, target_date, start_time, end_time):
         end_input = schbox.locator('input[data-role="end-time"]')
         if end_input.count() > 0:
             end_input.click(timeout=3000)
+            time.sleep(0.2)
+            page.keyboard.press("Control+a")
             end_input.fill(end_time)
         else:
             # data-role がない場合は 2 つ目の input を使う
             end_input2 = schbox.locator("input.schBox_inputTime").nth(1)
             end_input2.click(timeout=3000)
+            time.sleep(0.2)
+            page.keyboard.press("Control+a")
             end_input2.fill(end_time)
         time.sleep(0.2)
 
@@ -308,114 +335,119 @@ def update_cell(page, data_id, target_date, start_time, end_time):
 
 def main():
     # ── Step 1: スプレッドシートを読み込む ──
-    schedule = load_schedule()
+    schedules = load_schedule()
 
     # ── Step 2: 今週の日付範囲を特定 ──
     week_start, week_end = get_current_week_dates()
     print(f"今週: {week_start.strftime('%Y/%m/%d')} 〜 {week_end.strftime('%Y/%m/%d')}")
 
-    # 今週分のデータだけ抽出
-    this_week = {
-        name: {d: t for d, t in dates.items() if week_start <= d <= week_end}
-        for name, dates in schedule.items()
-    }
-    this_week = {name: dates for name, dates in this_week.items() if dates}
-
-    total_entries = sum(len(v) for v in this_week.values())
-    print(f"今週の更新対象: {len(this_week)} 人 / {total_entries} 件")
-
-    if not this_week:
-        print("今週の出勤データがありません。終了します。")
-        return
-
-    # ── Step 3: ブラウザ起動 → ログイン → 更新 ──
+    # ── Step 3: ブラウザ起動 → 店舗ごとにログイン → 更新 ──
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
-        page = browser.new_page()
-        page.set_viewport_size({"width": 1600, "height": 900})
 
-        # ログイン
-        print("\nVenrey にログイン中...")
-        page.goto(LOGIN_URL)
-        page.wait_for_load_state("networkidle", timeout=20000)
+        for store_idx, store in enumerate(STORES):
+            label_store = f"店舗{store_idx + 1}"
 
-        page.locator("input").first.fill(STORE_ID)
-        page.locator('input[type="password"]').fill(PASSWORD)
-        page.locator('button[type="submit"], button:has-text("ログイン")').first.click()
-        page.wait_for_load_state("networkidle", timeout=20000)
-        print("ログイン完了")
+            # 今週分のデータだけ抽出
+            schedule = schedules[store_idx]
+            this_week = {
+                name: {d: t for d, t in dates.items() if week_start <= d <= week_end}
+                for name, dates in schedule.items()
+            }
+            this_week = {name: dates for name, dates in this_week.items() if dates}
 
-        # 週間スケジュールへ移動
-        page.locator("text=週間スケジュール").first.click()
-        page.wait_for_load_state("networkidle", timeout=20000)
-        print("週間スケジュール画面を開きました")
+            total_entries = sum(len(v) for v in this_week.values())
+            print(f"\n{label_store}: 今週の更新対象 {len(this_week)} 人 / {total_entries} 件")
 
-        # 「今週」ボタンで現在の週に移動
-        try:
-            page.locator('button:has-text("今週"), a:has-text("今週")').first.click(timeout=3000)
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except PlaywrightTimeout:
-            pass
-
-        # pager2 の表示人数セレクトを 400 に変更して全スタッフを 1 ページに表示
-        try:
-            page.locator("pager2 select").select_option(value="400")
-            page.wait_for_load_state("networkidle", timeout=15000)
-            print("表示人数を 400 人に変更しました")
-        except PlaywrightTimeout:
-            print("表示人数の変更がタイムアウトしました（続行します）")
-        except Exception as e:
-            print(f"表示人数の変更に失敗しました: {e}（続行します）")
-
-        # ── 全スタッフを一括更新 ──
-        updated = 0
-        failed = 0
-
-        # スタッフ名 → data-id マッピングを取得
-        staff_id_map = get_staff_id_map(page)
-        print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
-        print("  [シート側の名前]:", list(this_week.keys())[:5])
-        print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
-
-        for staff_name, date_times in this_week.items():
-            if staff_name not in staff_id_map:
-                # 名前が一致しない場合はスキップ（名前の表記ゆれが原因の可能性）
-                print(f"  スキップ（管理画面に見つかりません）: {staff_name}")
+            if not this_week:
+                print(f"{label_store}: 今週の出勤データがありません。スキップします。")
                 continue
 
-            data_id = staff_id_map[staff_name]
+            page = browser.new_page()
+            page.set_viewport_size({"width": 1600, "height": 900})
 
-            for target_date, shift in sorted(date_times.items()):
-                if not (week_start <= target_date <= week_end):
+            # ログイン
+            print(f"{label_store} にログイン中...")
+            page.goto(LOGIN_URL)
+            page.wait_for_load_state("networkidle", timeout=20000)
+
+            page.locator("input").first.fill(store["id"])
+            page.locator('input[type="password"]').fill(store["password"])
+            page.locator('button[type="submit"], button:has-text("ログイン")').first.click()
+            page.wait_for_load_state("networkidle", timeout=20000)
+            print("ログイン完了")
+
+            # 週間スケジュールへ移動
+            page.locator("text=週間スケジュール").first.click()
+            page.wait_for_load_state("networkidle", timeout=20000)
+            print("週間スケジュール画面を開きました")
+
+            # 「今週」ボタンで現在の週に移動
+            try:
+                page.locator('button:has-text("今週"), a:has-text("今週")').first.click(timeout=3000)
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except PlaywrightTimeout:
+                pass
+
+            # pager2 の表示人数セレクトを 400 に変更して全スタッフを 1 ページに表示
+            try:
+                page.locator("pager2 select").first.select_option(value="400")
+                page.wait_for_load_state("networkidle", timeout=15000)
+                print("表示人数を 400 人に変更しました")
+            except PlaywrightTimeout:
+                print("表示人数の変更がタイムアウトしました（続行します）")
+            except Exception as e:
+                print(f"表示人数の変更に失敗しました: {e}（続行します）")
+
+            # ── 全スタッフを一括更新 ──
+            updated = 0
+            failed = 0
+
+            # スタッフ名 → data-id マッピングを取得
+            staff_id_map = get_staff_id_map(page)
+            print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
+            print("  [シート側の名前]:", list(this_week.keys())[:5])
+            print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
+
+            for staff_name, date_times in this_week.items():
+                if staff_name not in staff_id_map:
+                    print(f"  スキップ（管理画面に見つかりません）: {staff_name}")
                     continue
 
-                # shift は ("開始", "終了") または "休み"
-                if shift == "休み":
-                    label = "休み"
-                    start, end = "休み", ""
-                else:
-                    start, end = shift
-                    label = f"{start}〜{end}"
+                data_id = staff_id_map[staff_name]
 
-                print(f"  更新: {staff_name} / {target_date.strftime('%m/%d')} {label}")
-                success = update_cell(page, data_id, target_date, start, end)
+                for target_date, shift in sorted(date_times.items()):
+                    if not (week_start <= target_date <= week_end):
+                        continue
 
-                if success:
-                    updated += 1
-                    print("    → 完了")
-                else:
-                    failed += 1
-                    print("    → 失敗（スキップ）")
+                    # shift は ("開始", "終了") または "休み"
+                    if shift == "休み":
+                        shift_label = "休み"
+                        start, end = "休み", ""
+                    else:
+                        start, end = shift
+                        shift_label = f"{start}〜{end}"
 
-        # ── 完了報告 ──
-        print(f"\n{'=' * 40}")
-        print(f"完了！  更新: {updated} 件 / 失敗: {failed} 件")
-        if failed > 0:
-            print("失敗したセルは手動で確認・入力してください。")
-        print("=" * 40)
+                    print(f"  更新: {staff_name} / {target_date.strftime('%m/%d')} {shift_label}")
+                    success = update_cell(page, data_id, target_date, start, end)
 
-        # ブラウザを 5 秒後に閉じる
-        time.sleep(5)
+                    if success:
+                        updated += 1
+                        print("    → 完了")
+                    else:
+                        failed += 1
+                        print("    → 失敗（スキップ）")
+
+            # ── 店舗ごとの完了報告 ──
+            print(f"\n{'=' * 40}")
+            print(f"{label_store} 完了！  更新: {updated} 件 / 失敗: {failed} 件")
+            if failed > 0:
+                print("失敗したセルは手動で確認・入力してください。")
+            print("=" * 40)
+
+            page.close()
+
+        time.sleep(3)
         browser.close()
 
 
