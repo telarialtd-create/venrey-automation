@@ -456,31 +456,55 @@ def main():
             except Exception as e:
                 print(f"表示人数の変更に失敗しました: {e}（続行します）")
 
-            # ── 全スタッフを一括更新 ──
+            # ── 全スタッフを一括更新（今週・来週の2画面をカバー）──
             updated = 0
-            failed = 0
+            failed  = 0
 
-            # スタッフ名 → data-id マッピングを取得
-            staff_id_map = get_staff_id_map(page)
-            print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
-            print("  [シート側の名前]:", list(this_week.keys())[:5])
-            print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
-
+            # 未更新の (staff_name, target_date, shift) を管理
+            pending = []
             for staff_name, date_times in this_week.items():
-                if staff_name not in staff_id_map:
-                    print(f"  スキップ（管理画面に見つかりません）: {staff_name}")
-                    continue
-
-                data_id = staff_id_map[staff_name]
-
                 for target_date, shift in sorted(date_times.items()):
-                    if not (week_start <= target_date <= week_end):
+                    if week_start <= target_date <= week_end:
+                        pending.append((staff_name, target_date, shift))
+
+            # 今週・来週の最大2画面を試みる
+            for screen in ["今週", "来週"]:
+                if not pending:
+                    break
+
+                if screen == "来週":
+                    # 翌週ボタンをクリック
+                    print("\n来週画面に移動して残りを更新します...")
+                    try:
+                        page.locator(
+                            'button:has-text("翌週"), button:has-text("次週"), '
+                            'button:has-text("次の週"), a:has-text("翌週"), '
+                            'a:has-text("次週"), .next, [aria-label="next"]'
+                        ).first.click(timeout=5000)
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                        time.sleep(1)
+                    except PlaywrightTimeout:
+                        print("  翌週ボタンが見つかりませんでした。スキップします。")
+                        break
+
+                staff_id_map = get_staff_id_map(page)
+                if screen == "今週":
+                    print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
+                    print("  [シート側の名前]:", list(this_week.keys())[:5])
+                    print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
+
+                still_pending = []
+                for (staff_name, target_date, shift) in pending:
+                    if staff_name not in staff_id_map:
+                        if screen == "今週":
+                            print(f"  スキップ（管理画面に見つかりません）: {staff_name}")
+                        still_pending.append((staff_name, target_date, shift))
                         continue
 
-                    # shift は ("開始", "終了") または "休み"
+                    data_id = staff_id_map[staff_name]
+
                     if shift == "休み":
-                        shift_label = "休み"
-                        start, end = "休み", ""
+                        shift_label, start, end = "休み", "休み", ""
                     else:
                         start, end = shift
                         shift_label = f"{start}〜{end}"
@@ -492,8 +516,17 @@ def main():
                         updated += 1
                         print("    → 完了")
                     else:
-                        failed += 1
-                        print("    → 失敗（スキップ）")
+                        # このセルは今の画面にない → 来週画面で再試行
+                        still_pending.append((staff_name, target_date, shift))
+                        print("    → この画面にないため来週画面で再試行")
+
+                pending = still_pending
+
+            # 最終的に更新できなかった件数
+            failed = len(pending)
+            if pending:
+                for staff_name, target_date, _ in pending:
+                    print(f"  最終失敗: {staff_name} / {target_date.strftime('%m/%d')}")
 
             # ── 店舗ごとの完了報告 ──
             print(f"\n{'=' * 40}")
