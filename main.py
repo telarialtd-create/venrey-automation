@@ -188,43 +188,49 @@ def load_schedule():
     print("スプレッドシートを読み込み中...")
 
     today = datetime.now()
-    year, month = today.year, today.month
-    next_year  = year if month < 12 else year + 1
-    next_month = month + 1 if month < 12 else 1
 
-    this_sheet = f"{year}年{month}月"
-    next_sheet = f"{next_year}年{next_month}月"
+    # 最新の「YYYY年M月」シートを探す（直近6ヶ月を遡って検索）
+    base_year, base_month = None, None
+    df_base = None
+    for offset in range(6):
+        y = today.year if (today.month - offset) > 0 else today.year - 1
+        m = (today.month - offset - 1) % 12 + 1
+        sheet_name = f"{y}年{m}月"
+        df = _fetch_sheet_df(sheet_name)
+        if df is not None:
+            base_year, base_month = y, m
+            df_base = df
+            print(f"  参照シート: 「{sheet_name}」")
+            break
 
-    # 今月シートを取得（必須）
-    df_this = _fetch_sheet_df(this_sheet)
-    if df_this is None:
-        print(f"エラー: 「{this_sheet}」シートの取得に失敗しました。")
-        print("スプレッドシートを「リンクを知っている全員が閲覧可」に設定してください。")
+    if df_base is None:
+        print("エラー: 「YYYY年M月」形式のシートが見つかりませんでした。")
         sys.exit(1)
 
-    # 来月シートを取得（任意）
+    # 来月シートを確認
+    next_year  = base_year if base_month < 12 else base_year + 1
+    next_month = base_month + 1 if base_month < 12 else 1
+    next_sheet = f"{next_year}年{next_month}月"
     df_next = _fetch_sheet_df(next_sheet)
 
     if df_next is not None:
-        # 来月シートが存在 → 今月シートは当月分のみ、来月シートは翌月分のみ読む
-        print(f"  今月シート「{this_sheet}」＋来月シート「{next_sheet}」を読み込みます")
-        date_map_this = _build_date_map(df_this, year, month)
-        # 今月分の日付のみに絞る
-        date_map_this = {c: d for c, d in date_map_this.items() if d.month == month}
+        # 来月シートが存在 → 基準月は当月分のみ、来月シートは翌月分のみ読む
+        print(f"  来月シート「{next_sheet}」も検出 → 両方を読み込みます")
+        date_map_base = _build_date_map(df_base, base_year, base_month)
+        date_map_base = {c: d for c, d in date_map_base.items() if d.month == base_month}
         date_map_next = _build_date_map(df_next, next_year, next_month)
 
-        schedules = _parse_staff_rows(df_this, date_map_this)
+        schedules = _parse_staff_rows(df_base, date_map_base)
         next_schedules = _parse_staff_rows(df_next, date_map_next)
 
-        # 来月データをマージ（来月シート優先）
         for i in range(2):
             for name, dates in next_schedules[i].items():
                 schedules[i].setdefault(name, {}).update(dates)
     else:
-        # 来月シート未作成 → 今月シートのAJ列以降（来月プレビュー）も含めて読む
-        print(f"  今月シート「{this_sheet}」のみ読み込み（来月プレビュー列も参照）")
-        date_map = _build_date_map(df_this, year, month)
-        schedules = _parse_staff_rows(df_this, date_map)
+        # 来月シート未作成 → 基準シートのAJ列以降（来月プレビュー）も含めて読む
+        print(f"  来月シートなし → AJ列以降の来月プレビューも参照します")
+        date_map = _build_date_map(df_base, base_year, base_month)
+        schedules = _parse_staff_rows(df_base, date_map)
 
     for i, s in enumerate(schedules):
         total = sum(len(v) for v in s.values())
