@@ -440,6 +440,11 @@ def main():
             total_entries = sum(len(v) for v in this_week.values())
             print(f"\n{label_store}: 今週の更新対象 {len(this_week)} 人 / {total_entries} 件")
 
+            # 各スタッフの対象日程を表示（デバッグ用）
+            for nm, dts in this_week.items():
+                dates_str = ", ".join(d.strftime("%m/%d") for d in sorted(dts))
+                print(f"  {nm}: {dates_str}")
+
             if not this_week:
                 print(f"{label_store}: 今週の出勤データがありません。スキップします。")
                 continue
@@ -523,8 +528,7 @@ def main():
                 still_pending = []
                 for (staff_name, target_date, shift) in pending:
                     if staff_name not in staff_id_map:
-                        if screen == "今週":
-                            print(f"  スキップ（管理画面に見つかりません）: {staff_name}")
+                        print(f"  [{screen}] 名前不一致でスキップ: {staff_name}")
                         still_pending.append((staff_name, target_date, shift))
                         continue
 
