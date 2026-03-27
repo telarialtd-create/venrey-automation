@@ -24,3 +24,11 @@ jobs:
 
       - name: スケジュールを更新
         run: python main.py
+
+      - name: スクリーンショットを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          retention-days: 7
