@@ -336,21 +336,25 @@ def set_status_to_holiday(schbox_locator):
 def set_status_to_working(page, schbox_locator):
     """
     schBox のステータスを「出勤」に設定する。
-    現在の状態が pend（未設定）の場合のみクリックする。
+    pend（未設定）または off（休み）の場合に on（出勤）へ変更する。
+    サイクル: pend → on → off → pend ...
     """
     try:
         cls = schbox_locator.get_attribute("class", timeout=2000)
-        if cls and "pend" in cls:
-            # 未設定 → 出勤 にするため schBox_states ボタンをクリック
-            btn = schbox_locator.locator(".schBox_states")
+        if cls and "on" in cls:
+            return  # すでに出勤
+        print(f"    [状態変更] 初期class: {cls}")
+        btn = schbox_locator.locator(".schBox_states")
+        # 最大3回クリックして on になるまで試みる
+        for i in range(3):
             btn.click(timeout=3000)
             time.sleep(0.4)
-            # クリック後に「出勤」になっていなければもう一度クリック（サイクルする場合）
-            cls2 = schbox_locator.get_attribute("class", timeout=2000)
-            if cls2 and "on" not in cls2:
-                btn.click(timeout=3000)
-                time.sleep(0.3)
-    except PlaywrightTimeout:
+            cls = schbox_locator.get_attribute("class", timeout=2000)
+            print(f"    [状態変更] クリック{i+1}回後: {cls}")
+            if cls and "on" in cls:
+                break
+    except PlaywrightTimeout as e:
+        print(f"    [状態変更] PlaywrightTimeout: {e}")
         pass
 
 
@@ -372,7 +376,18 @@ def update_cell(page, data_id, target_date, start_time, end_time):
             return False
 
         # 必要に応じてスクロールして表示させる
-        schbox.scroll_into_view_if_needed(timeout=3000)
+        print(f"    [D1] scroll開始")
+        try:
+            schbox.scroll_into_view_if_needed(timeout=3000)
+            print(f"    [D2] scroll完了")
+        except PlaywrightTimeout:
+            print(f"    [D3] scrollタイムアウト → JS fallback")
+            try:
+                schbox.evaluate("el => el.scrollIntoView({block: 'center', inline: 'nearest'})")
+                print(f"    [D4] JS scroll完了")
+            except Exception as e:
+                print(f"    [D5] JS scrollエラー: {e}")
+                return False
         time.sleep(0.2)
 
         # 休みの場合はステータスを「休み」に設定して終了
@@ -382,7 +397,17 @@ def update_cell(page, data_id, target_date, start_time, end_time):
             return True
 
         # 出勤の場合: ステータスを「出勤」に設定して時間を入力
+        print(f"    [D6] set_status_to_working呼び出し")
         set_status_to_working(page, schbox)
+        print(f"    [D7] set_status_to_working完了")
+
+        # 状態変更の確認（offのままなら失敗）
+        cls_after = schbox.get_attribute("class", timeout=2000)
+        print(f"    [D8] cls_after={cls_after}")
+        if cls_after and "on" not in cls_after:
+            print(f"    状態変更失敗 (class={cls_after})")
+            return False
+        time.sleep(0.5)  # Angular の再レンダリング待ち
 
         # 開始時間の入力（data-role 属性のない 1 つ目の schBox_inputTime）
         start_input = schbox.locator("input.schBox_inputTime").first
