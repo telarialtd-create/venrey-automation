@@ -511,6 +511,9 @@ def main():
                     if week_start <= target_date <= week_end:
                         pending.append((staff_name, target_date, shift))
 
+            # Venreyに存在するか確認するためのセット（3画面で見つかった名前を追跡）
+            found_in_venrey = set()
+
             # 先週・今週・来週の最大3画面を試みる
             for screen in ["今週", "来週", "先週"]:
                 if not pending:
@@ -557,15 +560,11 @@ def main():
                     print(f"\n管理画面のスタッフ数: {len(staff_id_map)} 人")
                     print("  [シート側の名前]:", list(this_week.keys())[:5])
                     print("  [管理画面の名前]:", list(staff_id_map.keys())[:5])
-                    # ふわもこSPA（store_idx==1）の場合、ページ上の全name系クラスを調査
-                    if store_idx == 1:
-                        print("  [DEBUG] 管理画面の全スタッフ名:", list(staff_id_map.keys()))
+                found_in_venrey.update(staff_id_map.keys())
 
                 still_pending = []
                 for (staff_name, target_date, shift) in pending:
                     if staff_name not in staff_id_map:
-                        if screen == "先週":
-                            print(f"  [先週] 名前不一致でスキップ: {staff_name}")
                         still_pending.append((staff_name, target_date, shift))
                         continue
 
@@ -592,11 +591,18 @@ def main():
 
                 pending = still_pending
 
-            # 最終的に更新できなかった件数
-            failed = len(pending)
-            if pending:
-                for staff_name, target_date, _ in pending:
+            # 最終失敗を「Venrey未登録」と「更新失敗」に分類
+            not_in_venrey = [(n, d, s) for n, d, s in pending if n not in found_in_venrey]
+            real_failures = [(n, d, s) for n, d, s in pending if n in found_in_venrey]
+
+            if not_in_venrey:
+                unregistered = sorted({n for n, _, _ in not_in_venrey})
+                print(f"  Venrey未登録スタッフ（スキップ）: {', '.join(unregistered)}")
+            if real_failures:
+                for staff_name, target_date, _ in real_failures:
                     print(f"  最終失敗: {staff_name} / {target_date.strftime('%m/%d')}")
+
+            failed = len(real_failures)
 
             # ── 店舗ごとの完了報告 ──
             print(f"\n{'=' * 40}")
