@@ -468,6 +468,13 @@ def main():
             }
             this_week = {name: dates for name, dates in this_week.items() if dates}
 
+            # 今週シフトがあるスタッフの無データ日を「休み」として補完する
+            all_week_dates = [week_start + timedelta(days=i) for i in range(7)]
+            for name in list(this_week.keys()):
+                for d in all_week_dates:
+                    if d not in this_week[name]:
+                        this_week[name][d] = "休み"
+
             total_entries = sum(len(v) for v in this_week.values())
             print(f"\n{label_store}: 今週の更新対象 {len(this_week)} 人 / {total_entries} 件")
 
