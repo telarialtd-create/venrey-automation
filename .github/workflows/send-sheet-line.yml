@@ -22,9 +22,12 @@ jobs:
 
       - name: 認証情報を配置
         run: |
-          mkdir -p /Users/hiraokawashin/.config
-          echo '${{ secrets.GCP_OAUTH_KEYS }}' > /Users/hiraokawashin/.config/gcp-oauth.keys.json
-          echo '${{ secrets.GDRIVE_CREDENTIALS }}' > /Users/hiraokawashin/.config/gdrive-server-credentials.json
+          mkdir -p ~/.config
+          echo '${{ secrets.GCP_OAUTH_KEYS }}' > ~/.config/gcp-oauth.keys.json
+          echo '${{ secrets.GDRIVE_CREDENTIALS }}' > ~/.config/gdrive-server-credentials.json
 
       - name: スクリプト実行
+        env:
+          OAUTH_KEYS_PATH: /home/runner/.config/gcp-oauth.keys.json
+          CREDENTIALS_PATH: /home/runner/.config/gdrive-server-credentials.json
         run: python send_sheet_line.py

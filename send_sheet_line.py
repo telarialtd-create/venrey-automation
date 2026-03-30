@@ -16,8 +16,8 @@ SHEET_ID = "10siqLe6B9A7uvNWgRUdHb462RqxCxkGEGMEKTPhY-S8"
 LINE_TOKEN = "ifKMFJwttgSGoWsmSEx0WTWETYx+pauurDW4cFjO/cyszJ7Pxa1ahQg2BFaQ6TFzMqzXTX5U+Xrl0T58bVSumOVOvMnj4e3AjP9NIOv+o3xYJUTqdRG+gIOR0YYhEv7KrJVVslDy+r23STaPvSwRMwdB04t89/1O/w1cDnyilFU="
 LINE_USER_ID = "Ufa7625fe16c66fd60aebc14b32a74220"
 LINE_GROUP_ID = "Cfc2a40e8199d10556f696690d5885964"
-OAUTH_KEYS_PATH = "/Users/hiraokawashin/.config/gcp-oauth.keys.json"
-CREDENTIALS_PATH = "/Users/hiraokawashin/.config/gdrive-server-credentials.json"
+OAUTH_KEYS_PATH = os.environ.get("OAUTH_KEYS_PATH", "/Users/hiraokawashin/.config/gcp-oauth.keys.json")
+CREDENTIALS_PATH = os.environ.get("CREDENTIALS_PATH", "/Users/hiraokawashin/.config/gdrive-server-credentials.json")
 
 ROW_START = 1
 WEEK_COLS = 7   # 1週間 = 7列
