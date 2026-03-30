@@ -513,6 +513,12 @@ def main():
             except PlaywrightTimeout:
                 pass
 
+            # Angular がスケジュールセルを完全に初期化するまで待つ
+            try:
+                page.wait_for_selector('.schBox[data-id]', state='visible', timeout=15000)
+            except PlaywrightTimeout:
+                pass
+            time.sleep(3)
 
             # ── 全スタッフを一括更新（今週・来週の2画面をカバー）──
             updated = 0
@@ -625,6 +631,13 @@ def main():
                 print("失敗したセルは手動で確認・入力してください。")
             print("=" * 40)
 
+            # Angular の保存リクエストが完了するまで待つ（page.close() でキャンセルされるのを防ぐ）
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeout:
+                pass
+            time.sleep(5)
+
             page.close()
 
         time.sleep(3)
@@ -633,3 +646,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
