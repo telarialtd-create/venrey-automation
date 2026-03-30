@@ -279,43 +279,18 @@ def get_staff_id_map(page):
     """
     現在のページに表示されているスタッフ名 → data-id のマッピングを取得する。
 
-    方法1（優先）: label[for] で名前とIDを直接紐付け（最も確実）
-    方法2（フォールバック）: .schBox の data-id 属性を名前要素の祖先/兄弟から探す
-    方法3（最終手段）: 位置ベース（DOM順が一致する前提）
+    Step1: 位置ベースで全スタッフを取得（全員分のIDを確保）
+    Step2: label[for] で取得できるものは上書き補正（位置ずれ修正）
+
+    このハイブリッド方式により、全員分のIDが取れつつ
+    label[for]で正確に特定できるスタッフは確実に正しいIDが割り当てられる。
     """
     result = page.evaluate("""
         () => {
             const map = {};
+            const debugLines = [];
 
-            // 方法1: label[for] で名前と ID を直接紐付け（位置ずれが起きない）
-            document.querySelectorAll('label[for]').forEach(label => {
-                const nameEl = label.querySelector('.listGirl_name');
-                if (!nameEl) return;
-                const name = nameEl.textContent.trim();
-                const id = label.getAttribute('for');
-                if (name && id && !map[name]) map[name] = id;
-            });
-
-            if (Object.keys(map).length > 0) return map;
-
-            // 方法2: .listGirl_name の祖先または隣接要素から data-id を取得
-            document.querySelectorAll('.listGirl_name').forEach(nameEl => {
-                const name = nameEl.textContent.trim();
-                if (!name) return;
-                // 祖先に data-id があれば使う
-                let el = nameEl.parentElement;
-                while (el) {
-                    if (el.hasAttribute('data-id')) {
-                        if (!map[name]) map[name] = el.getAttribute('data-id');
-                        break;
-                    }
-                    el = el.parentElement;
-                }
-            });
-
-            if (Object.keys(map).length > 0) return map;
-
-            // 方法3: 位置ベース（最終手段 — 名前の DOM 順 = schBox id の最初出現順 と仮定）
+            // Step1: 位置ベースで全スタッフを取得
             const nameEls = [...document.querySelectorAll('.listGirl_name')];
             const seen = new Set();
             const schBoxIds = [];
@@ -324,15 +299,43 @@ def get_staff_id_map(page):
                 if (!seen.has(id)) { seen.add(id); schBoxIds.push(id); }
             });
 
+            debugLines.push('[位置ベース] nameEls=' + nameEls.length + ' schBoxIds=' + schBoxIds.length);
+
             const minLen = Math.min(nameEls.length, schBoxIds.length);
             for (let i = 0; i < minLen; i++) {
                 const name = nameEls[i].textContent.trim();
                 if (name) map[name] = schBoxIds[i];
             }
 
+            // Step2: label[for] で正確に特定できるスタッフを上書き補正
+            let labelCount = 0;
+            document.querySelectorAll('label[for]').forEach(label => {
+                const nameEl = label.querySelector('.listGirl_name');
+                if (!nameEl) return;
+                const name = nameEl.textContent.trim();
+                const forId = label.getAttribute('for');
+                if (!name || !forId) return;
+                // schBox[data-id=forId] が実際に存在するか確認してから使う
+                const schBox = document.querySelector('.schBox[data-id="' + forId + '"]');
+                if (schBox) {
+                    if (map[name] && map[name] !== forId) {
+                        debugLines.push('[補正] ' + name + ': ' + map[name] + ' → ' + forId);
+                    }
+                    map[name] = forId;
+                    labelCount++;
+                }
+            });
+
+            debugLines.push('[label補正] ' + labelCount + '件補正');
+            map['__debug__'] = debugLines.join(' | ');
+
             return map;
         }
     """)
+    # デバッグ情報を取り出してログ出力
+    debug_msg = result.pop('__debug__', '')
+    if debug_msg:
+        print(f"  [IDマッピング] {debug_msg}")
     return result
 
 
@@ -666,5 +669,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
