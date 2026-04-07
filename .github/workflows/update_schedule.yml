@@ -22,10 +22,29 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: pip キャッシュ設定
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-playwright-pandas-requests
+
+      - name: Playwright キャッシュ設定
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-v1
+
       - name: ライブラリをインストール
-        run: |
-          pip install playwright pandas requests
-          playwright install chromium --with-deps
+        run: pip install playwright pandas requests
+
+      - name: Chromium をインストール
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: playwright install chromium --with-deps
+
+      - name: Chromium の依存関係をインストール（キャッシュあり時）
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: playwright install-deps chromium
 
       - name: スケジュールを更新
         env:
