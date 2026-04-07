@@ -393,19 +393,37 @@ def get_staff_id_map(page):
     return result
 
 
-def search_staff_id(page, staff_name):
+def _get_search_input(page):
+    """検索ボックスのロケーターを返す。"""
+    return page.locator('input[placeholder="女性名で検索"], input[placeholder*="検索"]').first
+
+
+def _clear_search(page):
+    """検索ボックスをクリアして全スタッフ表示に戻す。"""
+    try:
+        inp = _get_search_input(page)
+        if inp.count() > 0:
+            inp.fill("")
+            inp.press("Enter")
+            time.sleep(0.8)
+    except Exception:
+        pass
+
+
+def search_and_activate_staff(page, staff_name):
     """
     「女性名で検索」ボックスで名前を絞り込み、data-id を返す。
-    見つからない場合は None を返す。
-    仮想スクロールで初期表示されていないスタッフに対して使用する。
+    ★検索フィルターはかけたまま（クリアしない）★
+    呼び出し元が update_cell を済ませた後に _clear_search() を呼ぶこと。
+    見つからない場合は None を返す（その場合も検索はクリアしない）。
     """
-    search_input = page.locator('input[placeholder="女性名で検索"], input[placeholder*="検索"]').first
-    if search_input.count() == 0:
-        return None
     try:
-        search_input.click(timeout=3000)
-        search_input.fill("")
-        search_input.type(staff_name, delay=50)
+        inp = _get_search_input(page)
+        if inp.count() == 0:
+            return None
+        inp.click(timeout=3000)
+        inp.fill("")
+        inp.type(staff_name, delay=50)
         time.sleep(1.5)  # Angular フィルタリングを待つ
 
         filtered_map = page.evaluate("""
@@ -435,24 +453,10 @@ def search_staff_id(page, staff_name):
                 return map;
             }
         """)
-
-        data_id = filtered_map.get(staff_name)
-
-        # 検索をクリアして全スタッフ表示に戻す
-        search_input.fill("")
-        search_input.press("Enter")
-        time.sleep(1)
-
-        return data_id
+        return filtered_map.get(staff_name)
 
     except Exception as e:
         print(f"    [検索エラー] {staff_name}: {e}")
-        try:
-            search_input.fill("")
-            search_input.press("Enter")
-            time.sleep(1)
-        except Exception:
-            pass
         return None
 
 
@@ -749,14 +753,18 @@ def main():
 
                 still_pending = []
                 for (staff_name, target_date, shift) in pending:
+                    used_search = False
                     if staff_name not in staff_id_map:
                         # 仮想スクロールで見えていない可能性 → 検索ボックスで絞り込んで再試行
-                        found_id = search_staff_id(page, staff_name)
+                        # ★フィルターはかけたまま → update_cell まで DOM に残す★
+                        found_id = search_and_activate_staff(page, staff_name)
                         if found_id:
                             staff_id_map[staff_name] = found_id
                             found_in_venrey.add(staff_name)
+                            used_search = True
                             print(f"    [検索で発見] {staff_name} → {found_id}")
                         else:
+                            _clear_search(page)
                             still_pending.append((staff_name, target_date, shift))
                             continue
 
@@ -770,6 +778,10 @@ def main():
 
                     print(f"  更新: {staff_name} / {target_date.strftime('%m/%d')} {shift_label}")
                     success = update_cell(page, data_id, target_date, start, end)
+
+                    # 検索フィルターを使った場合はここでクリアして全表示に戻す
+                    if used_search:
+                        _clear_search(page)
 
                     if success:
                         updated += 1
