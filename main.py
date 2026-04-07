@@ -393,6 +393,69 @@ def get_staff_id_map(page):
     return result
 
 
+def search_staff_id(page, staff_name):
+    """
+    「女性名で検索」ボックスで名前を絞り込み、data-id を返す。
+    見つからない場合は None を返す。
+    仮想スクロールで初期表示されていないスタッフに対して使用する。
+    """
+    search_input = page.locator('input[placeholder="女性名で検索"], input[placeholder*="検索"]').first
+    if search_input.count() == 0:
+        return None
+    try:
+        search_input.click(timeout=3000)
+        search_input.fill("")
+        search_input.type(staff_name, delay=50)
+        time.sleep(1.5)  # Angular フィルタリングを待つ
+
+        filtered_map = page.evaluate("""
+            () => {
+                const map = {};
+                const nameEls = [...document.querySelectorAll('.listGirl_name')];
+                const seen = new Set();
+                const schBoxIds = [];
+                document.querySelectorAll('.schBox[data-id]').forEach(el => {
+                    const id = el.getAttribute('data-id');
+                    if (!seen.has(id)) { seen.add(id); schBoxIds.push(id); }
+                });
+                const minLen = Math.min(nameEls.length, schBoxIds.length);
+                for (let i = 0; i < minLen; i++) {
+                    const name = nameEls[i].textContent.trim();
+                    if (name) map[name] = schBoxIds[i];
+                }
+                document.querySelectorAll('label[for]').forEach(label => {
+                    const nameEl = label.querySelector('.listGirl_name');
+                    if (!nameEl) return;
+                    const name = nameEl.textContent.trim();
+                    const forId = label.getAttribute('for');
+                    if (!name || !forId) return;
+                    const schBox = document.querySelector('.schBox[data-id="' + forId + '"]');
+                    if (schBox) map[name] = forId;
+                });
+                return map;
+            }
+        """)
+
+        data_id = filtered_map.get(staff_name)
+
+        # 検索をクリアして全スタッフ表示に戻す
+        search_input.fill("")
+        search_input.press("Enter")
+        time.sleep(1)
+
+        return data_id
+
+    except Exception as e:
+        print(f"    [検索エラー] {staff_name}: {e}")
+        try:
+            search_input.fill("")
+            search_input.press("Enter")
+            time.sleep(1)
+        except Exception:
+            pass
+        return None
+
+
 def set_status_to_holiday(schbox_locator):
     """
     schBox のステータスを「休み」(off) に設定する。
@@ -687,8 +750,15 @@ def main():
                 still_pending = []
                 for (staff_name, target_date, shift) in pending:
                     if staff_name not in staff_id_map:
-                        still_pending.append((staff_name, target_date, shift))
-                        continue
+                        # 仮想スクロールで見えていない可能性 → 検索ボックスで絞り込んで再試行
+                        found_id = search_staff_id(page, staff_name)
+                        if found_id:
+                            staff_id_map[staff_name] = found_id
+                            found_in_venrey.add(staff_name)
+                            print(f"    [検索で発見] {staff_name} → {found_id}")
+                        else:
+                            still_pending.append((staff_name, target_date, shift))
+                            continue
 
                     data_id = staff_id_map[staff_name]
 
