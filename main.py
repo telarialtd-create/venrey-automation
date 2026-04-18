@@ -691,6 +691,9 @@ def main():
             page.locator('input[type="password"]').fill(store["password"])
             page.locator('button[type="submit"], button:has-text("ログイン")').first.click()
             page.wait_for_load_state("networkidle", timeout=20000)
+            # Angular SPA のメニュー描画を待つ
+            page.wait_for_selector("text=週間スケジュール", state="visible", timeout=30000)
+            time.sleep(2)
             print("ログイン完了")
 
             # 週間スケジュールへ移動
